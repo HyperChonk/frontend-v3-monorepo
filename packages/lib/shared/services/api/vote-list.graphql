@@ -1,0 +1,22 @@
+query GetVeBalVotingList($includeKilled: Boolean) {
+  veBalGetVotingList(includeKilled: $includeKilled) {
+    id
+    symbol
+    type
+    address
+    chain
+    protocolVersion
+    gauge {
+      addedTimestamp
+      address
+      childGaugeAddress
+      isKilled
+      relativeWeight
+      relativeWeightCap
+    }
+    poolTokens {
+      ...PoolTokens
+    }
+    tags
+  }
+}

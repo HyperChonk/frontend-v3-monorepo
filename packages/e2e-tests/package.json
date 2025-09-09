@@ -1,0 +1,28 @@
+{
+  "name": "e2e-tests",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "playwright:install": "playwright install --with-deps",
+    "playwright:install:chromium": "playwright install --with-deps chromium",
+    "test:e2e:build": "start-server-and-test 'cd ../../ && pnpm start' 'http://localhost:3000' 'pnpm exec playwright test tests/build'",
+    "test:e2e:build:turbo": "NEXT_PUBLIC_E2E_DEV=1 start-server-and-test 'cd ../../ && pnpm start --filter=frontend-v3' 'http://localhost:3000' 'pnpm exec playwright test tests/dev'",
+    "test:e2e:build:ui": "pnpm exec playwright test tests/build --ui",
+    "test:e2e:dev": "NEXT_PUBLIC_E2E_DEV=1 pnpm exec playwright test tests/dev",
+    "test:e2e:dev:ui": "NEXT_PUBLIC_E2E_DEV=1 pnpm exec playwright test tests/dev --ui",
+    "test:e2e:local": "pnpm exec playwright test tests"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "1.50.1",
+    "@repo/lib": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "22.15.19",
+    "dotenv": "16.4.7",
+    "hyperchonk": "workspace:*",
+    "start-server-and-test": "2.0.11"
+  }
+}

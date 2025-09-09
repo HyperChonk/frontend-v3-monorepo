@@ -1,0 +1,334 @@
+'use client'
+
+import { HumanAmount } from '@burrbear/sdk'
+import {
+  Box,
+  Button,
+  Card,
+  CardBody,
+  CardFooter,
+  CardHeader,
+  Center,
+  HStack,
+  IconButton,
+  Tooltip,
+  useDisclosure,
+  VStack,
+} from '@chakra-ui/react'
+import { TokenInput } from '@repo/lib/modules/tokens/TokenInput/TokenInput'
+import { SafeAppAlert } from '@repo/lib/shared/components/alerts/SafeAppAlert'
+import FadeInOnView from '@repo/lib/shared/components/containers/FadeInOnView'
+import { useIsMounted } from '@repo/lib/shared/hooks/useIsMounted'
+import { GqlChain } from '@repo/lib/shared/services/api/generated/graphql'
+import { isSameAddress } from '@repo/lib/shared/utils/addresses'
+import { easeOut, motion } from 'framer-motion'
+import { capitalize } from 'lodash'
+import { useRef, useState } from 'react'
+import { CheckCircle, Link, Repeat } from 'react-feather'
+import { Address } from 'viem'
+import { ChainSelect } from '../chains/ChainSelect'
+import { supportsNestedActions } from '../pool/actions/LiquidityActionHelpers'
+import { isPoolSwapAllowed } from '../pool/pool.helpers'
+import { PriceImpactAccordion } from '../price-impact/PriceImpactAccordion'
+import { ApiToken } from '../tokens/token.types'
+import { CompactTokenSelectModal } from '../tokens/TokenSelectModal/TokenSelectList/CompactTokenSelectModal'
+import { TokenSelectModal } from '../tokens/TokenSelectModal/TokenSelectModal'
+import { useTokens } from '../tokens/TokensProvider'
+import { TransactionSettings } from '../user/settings/TransactionSettings'
+import { ConnectWallet } from '../web3/ConnectWallet'
+import { useUserAccount } from '../web3/UserAccountProvider'
+import { SwapPreviewModal } from './modal/SwapModal'
+import { PoolSwapCard } from './PoolSwapCard'
+import { SwapDetails } from './SwapDetails'
+import { useSwap } from './SwapProvider'
+import { SwapRate } from './SwapRate'
+import { SwapSimulationError } from './SwapSimulationError'
+import { useIsPoolSwapUrl } from './useIsPoolSwapUrl'
+
+type Props = {
+  redirectToPoolPage?: () => void // Only used for pool swaps
+}
+export function SwapForm({ redirectToPoolPage }: Props) {
+  const isPoolSwapUrl = useIsPoolSwapUrl()
+
+  const {
+    tokenIn,
+    tokenOut,
+    selectedChain,
+    tokens,
+    tokenSelectKey,
+    isDisabled,
+    disabledReason,
+    previewModalDisclosure,
+    simulationQuery,
+    swapAction,
+    swapTxHash,
+    transactionSteps,
+    isPoolSwap,
+    pool,
+    poolActionableTokens,
+    setSelectedChain,
+    setTokenInAmount,
+    setTokenOutAmount,
+    setTokenSelectKey,
+    setTokenIn,
+    setTokenOut,
+    switchTokens,
+    setNeedsToAcceptHighPI,
+    resetSwapAmounts,
+    replaceUrlPath,
+  } = useSwap()
+  const [copiedDeepLink, setCopiedDeepLink] = useState(false)
+  const tokenSelectDisclosure = useDisclosure()
+  const nextBtn = useRef(null)
+  const finalRefTokenIn = useRef(null)
+  const finalRefTokenOut = useRef(null)
+  const isMounted = useIsMounted()
+  const { isConnected } = useUserAccount()
+  const { startTokenPricePolling } = useTokens()
+
+  const isLoadingSwaps = simulationQuery.isLoading
+  const isLoading = isLoadingSwaps || !isMounted
+  const loadingText = isLoading ? 'Fetching swap...' : undefined
+
+  function copyDeepLink() {
+    navigator.clipboard.writeText(window.location.href)
+    setCopiedDeepLink(true)
+    setTimeout(() => setCopiedDeepLink(false), 2000)
+  }
+
+  function handleTokenSelect(token: ApiToken) {
+    if (!token) return
+    if (tokenSelectKey === 'tokenIn') {
+      setTokenIn(token.address as Address)
+    } else if (tokenSelectKey === 'tokenOut') {
+      setTokenOut(token.address as Address)
+    } else {
+      console.error('Unhandled token select key', tokenSelectKey)
+    }
+  }
+
+  function handleTokenSelectForPoolSwap(token: ApiToken) {
+    const tokenAddress = token.address as Address
+
+    if (
+      tokens.length === 2 &&
+      tokenSelectKey === 'tokenIn' &&
+      isSameAddress(tokenAddress, tokenOut.address)
+    ) {
+      if (tokenOut.address) return switchTokens()
+      return setTokenIn(tokenAddress)
+    }
+    if (
+      tokens.length === 2 &&
+      tokenSelectKey === 'tokenOut' &&
+      isSameAddress(tokenAddress, tokenIn.address)
+    ) {
+      if (tokenIn.address) return switchTokens()
+      return setTokenOut(tokenAddress)
+    }
+
+    if (!token) return
+
+    if (
+      pool &&
+      tokenSelectKey === 'tokenIn' &&
+      supportsNestedActions(pool) &&
+      !isPoolSwapAllowed(pool, tokenAddress, tokenOut.address)
+    ) {
+      setTokenIn(tokenAddress)
+      setTokenOut('' as Address)
+      return
+    }
+
+    if (
+      pool &&
+      tokenSelectKey === 'tokenOut' &&
+      supportsNestedActions(pool) &&
+      !isPoolSwapAllowed(pool, tokenAddress, tokenIn.address)
+    ) {
+      setTokenIn('' as Address)
+      setTokenOut(tokenAddress)
+      return
+    }
+
+    handleTokenSelect(token)
+  }
+
+  function openTokenSelectModal(tokenSelectKey: 'tokenIn' | 'tokenOut') {
+    setTokenSelectKey(tokenSelectKey)
+    tokenSelectDisclosure.onOpen()
+  }
+
+  function onModalClose() {
+    // restart polling for token prices when modal is closed again
+    startTokenPricePolling()
+
+    previewModalDisclosure.onClose()
+
+    if (swapTxHash) {
+      resetSwapAmounts()
+      transactionSteps.resetTransactionSteps()
+      if (isPoolSwapUrl) return redirectToPoolPage?.()
+      replaceUrlPath()
+    }
+  }
+
+  return (
+    <FadeInOnView>
+      <Center
+        h="full"
+        left={['-12px', '0']}
+        maxW="lg"
+        mx="auto"
+        position="relative"
+        w={['100vw', 'full']}
+      >
+        <Card rounded="xl">
+          <CardHeader as={HStack} justify="space-between" w="full" zIndex={11}>
+            <span>{isPoolSwap ? 'Single pool swap' : capitalize(swapAction)}</span>
+            <HStack>
+              <Tooltip label={copiedDeepLink ? 'Copied!' : 'Copy swap link'}>
+                <Button color="grayText" onClick={copyDeepLink} size="sm" variant="tertiary">
+                  {copiedDeepLink ? <CheckCircle size={16} /> : <Link size={16} />}
+                </Button>
+              </Tooltip>
+
+              <TransactionSettings size="sm" />
+            </HStack>
+          </CardHeader>
+          <CardBody align="start" as={VStack}>
+            <VStack spacing="md" w="full">
+              {isPoolSwap && <PoolSwapCard />}
+              <SafeAppAlert />
+              {!isPoolSwap && (
+                <ChainSelect
+                  onChange={newValue => {
+                    setSelectedChain(newValue as GqlChain)
+                    setTokenInAmount('')
+                  }}
+                  value={selectedChain}
+                />
+              )}
+              <VStack w="full">
+                <TokenInput
+                  address={tokenIn.address}
+                  aria-label="TokenIn"
+                  chain={selectedChain}
+                  onChange={e => setTokenInAmount(e.currentTarget.value as HumanAmount)}
+                  onToggleTokenClicked={() => openTokenSelectModal('tokenIn')}
+                  ref={finalRefTokenIn}
+                  value={tokenIn.amount}
+                />
+                <Box border="red 1px solid" position="relative">
+                  <IconButton
+                    aria-label="Switch tokens"
+                    fontSize="2xl"
+                    h="8"
+                    icon={<Repeat size={16} />}
+                    isRound
+                    ml="-4"
+                    mt="-4"
+                    onClick={switchTokens}
+                    position="absolute"
+                    size="sm"
+                    variant="tertiary"
+                    w="8"
+                  />
+                </Box>
+                <TokenInput
+                  address={tokenOut.address}
+                  aria-label="TokeOut"
+                  chain={selectedChain}
+                  disableBalanceValidation
+                  hasPriceImpact
+                  isLoadingPriceImpact={
+                    simulationQuery.isLoading || !simulationQuery.data || !tokenIn.amount
+                  }
+                  onChange={e => setTokenOutAmount(e.currentTarget.value as HumanAmount)}
+                  onToggleTokenClicked={() => openTokenSelectModal('tokenOut')}
+                  ref={finalRefTokenOut}
+                  value={tokenOut.amount}
+                />
+              </VStack>
+              {!!simulationQuery.data && (
+                <motion.div
+                  animate={{ opacity: 1, scaleY: 1 }}
+                  initial={{ opacity: 0, scaleY: 0.9 }}
+                  style={{ width: '100%', transformOrigin: 'top' }}
+                  transition={{ duration: 0.3, ease: easeOut }}
+                >
+                  <PriceImpactAccordion
+                    accordionButtonComponent={<SwapRate />}
+                    accordionPanelComponent={<SwapDetails />}
+                    isDisabled={!simulationQuery.data}
+                    setNeedsToAcceptPIRisk={setNeedsToAcceptHighPI}
+                  />
+                </motion.div>
+              )}
+
+              {simulationQuery.isError ? (
+                <SwapSimulationError errorMessage={simulationQuery.error?.message} />
+              ) : null}
+            </VStack>
+          </CardBody>
+          <CardFooter>
+            {isConnected ? (
+              <Tooltip label={isDisabled ? disabledReason : ''}>
+                <Button
+                  isDisabled={isDisabled || !isMounted}
+                  isLoading={isLoading}
+                  loadingText={loadingText}
+                  onClick={() => !isDisabled && previewModalDisclosure.onOpen()}
+                  ref={nextBtn}
+                  size="lg"
+                  variant="secondary"
+                  w="full"
+                >
+                  Next
+                </Button>
+              </Tooltip>
+            ) : (
+              <ConnectWallet
+                isLoading={isLoading}
+                loadingText={loadingText}
+                size="lg"
+                variant="primary"
+                w="full"
+              />
+            )}
+          </CardFooter>
+        </Card>
+      </Center>
+      {isPoolSwap ? (
+        <CompactTokenSelectModal
+          chain={selectedChain}
+          finalFocusRef={tokenSelectKey === 'tokenIn' ? finalRefTokenIn : finalRefTokenOut}
+          isOpen={tokenSelectDisclosure.isOpen}
+          onClose={tokenSelectDisclosure.onClose}
+          onOpen={tokenSelectDisclosure.onOpen}
+          onTokenSelect={handleTokenSelectForPoolSwap}
+          tokens={poolActionableTokens || []}
+        />
+      ) : (
+        <TokenSelectModal
+          chain={selectedChain}
+          currentToken={tokenSelectKey === 'tokenIn' ? tokenIn.address : tokenOut.address}
+          finalFocusRef={tokenSelectKey === 'tokenIn' ? finalRefTokenIn : finalRefTokenOut}
+          isOpen={tokenSelectDisclosure.isOpen}
+          onClose={tokenSelectDisclosure.onClose}
+          onOpen={tokenSelectDisclosure.onOpen}
+          onTokenSelect={handleTokenSelect}
+          tokens={tokens}
+        />
+      )}
+
+      <SwapPreviewModal
+        finalFocusRef={nextBtn}
+        isOpen={previewModalDisclosure.isOpen}
+        onClose={onModalClose}
+        onOpen={previewModalDisclosure.onOpen}
+      />
+    </FadeInOnView>
+  )
+}
